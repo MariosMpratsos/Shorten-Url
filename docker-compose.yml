@@ -1,16 +1,16 @@
-version: '3.8'
-
+# Containers only listen on localhost; nginx on the host is the public entry point
 services:
   backend:
-    build: ./backend
+    image: ${IMAGE_PREFIX}/backend:${IMAGE_TAG}
+    env_file: backend.env
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     restart: always
 
   frontend:
-    build: ./frontend
+    image: ${IMAGE_PREFIX}/frontend:${IMAGE_TAG}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+    restart: always
     depends_on:
       - backend
-    restart: always

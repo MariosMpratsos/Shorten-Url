@@ -1,17 +1,6 @@
-# Dependencies
+.terraform/
+*.tfstate
+*.tfstate.*
+*.env
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Build Outputs
 dist/
-build/
-
-# Environment Files
-.env
-.env.local
-
-# Operating System Files
-.DS_Store
-Thumbs.db
