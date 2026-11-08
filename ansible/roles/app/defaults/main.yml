@@ -1,0 +1,4 @@
+frontend_url: "http://127.0.0.1:3000/"
+backend_port: 5000
+health_retries: 30
+health_delay: 3

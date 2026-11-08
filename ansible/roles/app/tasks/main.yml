@@ -1,0 +1,139 @@
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - image_prefix | length > 0
+      - image_tag | length > 0
+      - ghcr_user | length > 0
+      - ghcr_token | length > 0
+      - backend_env | length > 0
+      - cert_email | length > 0
+    fail_msg: "A required variable is empty (image_prefix, image_tag, ghcr_*, BACKEND_ENV secret or CERT_EMAIL variable)."
+  no_log: true
+
+- name: Copy the compose file
+  ansible.builtin.copy:
+    src: docker-compose.yml
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_user }}"
+    mode: "0644"
+
+- name: Write the backend env file
+  ansible.builtin.copy:
+    content: "{{ backend_env }}\n"
+    dest: "{{ app_dir }}/backend.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Log in to GHCR
+  ansible.builtin.shell: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+  environment:
+    GHCR_TOKEN: "{{ ghcr_token }}"
+    GHCR_USER: "{{ ghcr_user }}"
+    HOME: /root
+  changed_when: false
+  no_log: true
+
+- name: Read the currently running version
+  ansible.builtin.command: "cat {{ app_dir }}/.current_tag"
+  register: prev_raw
+  changed_when: false
+  failed_when: false
+
+- name: Remember the previous version
+  ansible.builtin.set_fact:
+    prev_tag: "{{ prev_raw.stdout | default('') | trim }}"
+
+- name: "Release {{ image_tag }} (previous: {{ prev_tag | default('none') or 'none' }})"
+  block:
+    - name: Run the new version
+      ansible.builtin.include_tasks: run_version.yml
+      vars:
+        version_tag: "{{ image_tag }}"
+
+    - name: Record the running version
+      ansible.builtin.copy:
+        content: "{{ image_tag }}\n"
+        dest: "{{ app_dir }}/.current_tag"
+        mode: "0644"
+
+    - name: Write the release log (success)
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/releases.log"
+        create: true
+        mode: "0644"
+        line: "{{ ansible_date_time.iso8601 }} OK        {{ image_tag }} env={{ release_env }} commit={{ release_sha }} by={{ release_actor }}"
+
+  rescue:
+    - name: Write the release log (failure)
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/releases.log"
+        create: true
+        mode: "0644"
+        line: "{{ ansible_date_time.iso8601 }} FAILED    {{ image_tag }} env={{ release_env }} commit={{ release_sha }} by={{ release_actor }}"
+
+    - name: Show the last container logs
+      ansible.builtin.command: docker compose logs --tail=50
+      args:
+        chdir: "{{ app_dir }}"
+      environment:
+        IMAGE_PREFIX: "{{ image_prefix }}"
+        IMAGE_TAG: "{{ image_tag }}"
+        HOME: /root
+      register: failure_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Print the container logs
+      ansible.builtin.debug:
+        var: failure_logs.stdout_lines
+
+    - name: Roll back to the previous version
+      ansible.builtin.include_tasks: run_version.yml
+      vars:
+        version_tag: "{{ prev_tag }}"
+      when: prev_tag | length > 0
+
+    - name: Write the release log (rollback)
+      ansible.builtin.lineinfile:
+        path: "{{ app_dir }}/releases.log"
+        create: true
+        mode: "0644"
+        line: "{{ ansible_date_time.iso8601 }} ROLLBACK  {{ prev_tag }} (after failed {{ image_tag }})"
+      when: prev_tag | length > 0
+
+    - name: Fail the release
+      ansible.builtin.fail:
+        msg: "Release {{ image_tag }} failed. {{ 'Rolled back to ' ~ prev_tag if prev_tag | length > 0 else 'No previous version to roll back to.' }}"
+
+- name: Request the HTTPS certificate (needs the DNS A record to point at this server)
+  ansible.builtin.command: >
+    certbot --nginx -d {{ domain }} -m {{ cert_email }}
+    --agree-tos --no-eff-email --non-interactive --redirect
+  args:
+    creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+  register: certbot_result
+  failed_when: false
+
+- name: Warn when the certificate could not be issued
+  ansible.builtin.debug:
+    msg: "WARNING: certbot failed. Does the DNS A record for {{ domain }} point to this server? Re-run the release once it does."
+  when: certbot_result.rc | default(0) != 0
+
+- name: Remove unused images older than 7 days
+  ansible.builtin.command: docker image prune -af --filter until=168h
+  environment:
+    HOME: /root
+  changed_when: false
+  failed_when: false
+
+- name: Show the last release log entries
+  ansible.builtin.command: "tail -n 5 {{ app_dir }}/releases.log"
+  register: release_log
+  changed_when: false
+
+- name: Release log
+  ansible.builtin.debug:
+    var: release_log.stdout_lines

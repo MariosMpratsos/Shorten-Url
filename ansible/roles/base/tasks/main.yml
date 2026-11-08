@@ -1,0 +1,152 @@
+- name: Check this is a dnf-based system (Amazon Linux)
+  ansible.builtin.assert:
+    that: ansible_facts['pkg_mgr'] in ['dnf', 'dnf5']
+    fail_msg: "These roles support Amazon Linux / RHEL family (dnf). For Ubuntu, adapt the package tasks to apt."
+
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - domain | length > 0
+    fail_msg: "DOMAIN is empty. Set the DOMAIN variable on the GitHub Environment."
+
+- name: Install packages
+  ansible.builtin.dnf:
+    name:
+      - docker
+      - git
+      - jq
+      - unzip
+      - nginx
+      - python3
+      - augeas-libs
+    state: present
+
+- name: Start and enable Docker
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Let the SSH user run docker
+  ansible.builtin.user:
+    name: "{{ ssh_user }}"
+    groups: docker
+    append: true
+
+- name: Create the Docker CLI plugin directory
+  ansible.builtin.file:
+    path: /usr/local/lib/docker/cli-plugins
+    state: directory
+    mode: "0755"
+
+- name: Install the Docker Compose plugin
+  ansible.builtin.get_url:
+    url: "https://github.com/docker/compose/releases/download/{{ compose_version }}/docker-compose-linux-x86_64"
+    dest: /usr/local/lib/docker/cli-plugins/docker-compose
+    mode: "0755"
+
+- name: Create the app directory
+  ansible.builtin.file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_user }}"
+    mode: "0755"
+
+# ---- swap (small instances have 1 GB RAM) ----
+- name: Create the swap file
+  ansible.builtin.command: "dd if=/dev/zero of=/swapfile bs=1M count={{ swap_size_mb }}"
+  args:
+    creates: /swapfile
+  register: swap_created
+
+- name: Secure the swap file
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Format and enable the swap file
+  ansible.builtin.shell: mkswap /swapfile && swapon /swapfile
+  when: swap_created.changed
+
+- name: Keep swap after reboot
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: "/swapfile swap swap defaults 0 0"
+    state: present
+
+# ---- nginx ----
+# force: false -> written once; certbot later edits this file to add HTTPS,
+# and re-running the playbook must not overwrite those changes.
+- name: Nginx site configuration
+  ansible.builtin.template:
+    src: nginx-app.conf.j2
+    dest: /etc/nginx/conf.d/app.conf
+    mode: "0644"
+    force: false
+
+- name: Test the nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Start and enable nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+
+# ---- certbot (Let's Encrypt) ----
+- name: Create the certbot virtualenv
+  ansible.builtin.command: python3 -m venv /opt/certbot
+  args:
+    creates: /opt/certbot/bin/pip
+
+- name: Install certbot
+  ansible.builtin.pip:
+    name:
+      - certbot
+      - certbot-nginx
+    virtualenv: /opt/certbot
+
+- name: Link the certbot command
+  ansible.builtin.file:
+    src: /opt/certbot/bin/certbot
+    dest: /usr/bin/certbot
+    state: link
+
+- name: Certbot renew service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/certbot-renew.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Certbot renew
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/certbot renew -q --deploy-hook "systemctl reload nginx"
+
+- name: Certbot renew timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/certbot-renew.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Daily certbot renew
+
+      [Timer]
+      OnCalendar=daily
+      RandomizedDelaySec=3600
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+- name: Enable the renew timer
+  ansible.builtin.systemd:
+    name: certbot-renew.timer
+    state: started
+    enabled: true
+    daemon_reload: true

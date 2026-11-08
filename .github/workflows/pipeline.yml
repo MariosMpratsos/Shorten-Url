@@ -1,31 +1,78 @@
-name: deploy
+name: release
 
 on:
-  push:
-    branches: [main]
+  # Manual release: Actions -> release -> Run workflow
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Client repo tag/branch/commit (production requires a tag like v1.2.3)"
+        required: true
+        type: string
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+        default: production
+  # Automatic release: the client repo sends this event when it publishes a release
+  repository_dispatch:
+    types: [client-release]
+
+# One release at a time per environment
+concurrency:
+  group: release-${{ inputs.environment || 'production' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
   packages: write
 
-env:
-  AWS_REGION: us-east-1
-  DOMAIN: shorten.bratsos.online
-
 jobs:
+  # ------------------------------------------------------------
+  # 1. Fetch the client's code at the requested version and build images
+  #    (built once, the same images are promoted staging -> production)
+  # ------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
     outputs:
-      image_prefix: ${{ steps.prefix.outputs.image_prefix }}
+      ref: ${{ steps.ref.outputs.ref }}
+      tag: ${{ steps.meta.outputs.tag }}
+      sha: ${{ steps.meta.outputs.sha }}
+      image_prefix: ${{ steps.meta.outputs.image_prefix }}
     steps:
-      - uses: actions/checkout@v4
-
-      - id: prefix
+      - name: Resolve and validate the requested version
+        id: ref
+        env:
+          REF: ${{ inputs.ref || github.event.client_payload.ref }}
+          TARGET_ENV: ${{ inputs.environment || 'production' }}
         run: |
-          # GHCR requires the whole image name to be lowercase (owner AND repo)
-          REPO_LC="${GITHUB_REPOSITORY,,}"
-          echo "image_prefix=ghcr.io/$REPO_LC" >> "$GITHUB_OUTPUT"
+          [ -n "$REF" ] || { echo "No ref given"; exit 1; }
+          if [ "$TARGET_ENV" = "production" ] && ! [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Production releases must be a version tag like v1.2.3 (got: $REF)"
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch client code (read-only token)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.CLIENT_REPO }}
+          ref: ${{ steps.ref.outputs.ref }}
+          token: ${{ secrets.CLIENT_REPO_TOKEN }}
+          path: client
+
+      - name: Compute image tag
+        id: meta
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          FULL_SHA=$(git -C client rev-parse HEAD)
+          SAFE_REF=$(printf '%s' "$REF" | tr -c 'A-Za-z0-9_.-' '-')
+          echo "sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag=${SAFE_REF}-${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "image_prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -33,80 +80,117 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push backend
+      - name: Build and push images
+        env:
+          PREFIX: ${{ steps.meta.outputs.image_prefix }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          CLIENT_REPO: ${{ vars.CLIENT_REPO }}
         run: |
-          IMG=${{ steps.prefix.outputs.image_prefix }}/backend
-          docker build -t $IMG:${{ github.sha }} ./backend
-          docker push $IMG:${{ github.sha }}
+          for svc in backend frontend; do
+            EXTRA=""
+            # Relative URL: the same image works on every domain (nginx proxies /api)
+            if [ "$svc" = "frontend" ]; then EXTRA="--build-arg VITE_API_URL=/api"; fi
+            docker build $EXTRA \
+              --label "org.opencontainers.image.source=https://github.com/$CLIENT_REPO" \
+              --label "org.opencontainers.image.revision=$SHA" \
+              --label "org.opencontainers.image.version=$TAG" \
+              -t "$PREFIX/$svc:$TAG" "./client/$svc"
+            docker push "$PREFIX/$svc:$TAG"
+          done
 
-      - name: Build and push frontend
-        run: |
-          IMG=${{ steps.prefix.outputs.image_prefix }}/frontend
-          docker build \
-            --build-arg VITE_API_URL=https://${{ env.DOMAIN }}/api \
-            -t $IMG:${{ github.sha }} ./frontend
-          docker push $IMG:${{ github.sha }}
-
+  # ------------------------------------------------------------
+  # 2. Configure the server and release with Ansible, over SSH
+  #    (production waits for approval if "Required reviewers" is set
+  #    on the GitHub Environment)
+  # ------------------------------------------------------------
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'production' }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/setup-python@v5
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          python-version: "3.12"
 
-      - name: Deploy over SSM
+      - name: Install Ansible
+        run: pip install "ansible-core>=2.16,<2.18"
+
+      - name: Prepare SSH
         env:
-          INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+          HOST: ${{ vars.SERVER_HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -e
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # SERVER_HOST may hold several servers separated by commas
+          : > ~/.ssh/known_hosts
+          for H in ${HOST//,/ }; do
+            for i in $(seq 1 30); do
+              OUT=$(ssh-keyscan -T 5 -H "$H" 2>/dev/null || true)
+              if [ -n "$OUT" ]; then echo "$OUT" >> ~/.ssh/known_hosts; break; fi
+              echo "Waiting for SSH on $H..."; sleep 10
+            done
+            ssh-keygen -F "$H" > /dev/null || { echo "Server $H not reachable over SSH"; exit 1; }
+          done
+
+      - name: Run the Ansible playbook
+        env:
+          HOST: ${{ vars.SERVER_HOST }}
+          SSH_USER: ${{ vars.SSH_USER || 'ec2-user' }}
+          DOMAIN: ${{ vars.DOMAIN }}
           CERT_EMAIL: ${{ vars.CERT_EMAIL }}
           BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
           IMAGE_PREFIX: ${{ needs.build.outputs.image_prefix }}
+          IMAGE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_SHA: ${{ needs.build.outputs.sha }}
+          RELEASE_ENV: ${{ inputs.environment || 'production' }}
+          RELEASE_ACTOR: ${{ github.actor }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANSIBLE_FORCE_COLOR: "1"
         run: |
-          B64_COMPOSE=$(base64 -w0 deploy/docker-compose.yml)
-          B64_ENV=$(printf '%s\n' "$BACKEND_ENV" | base64 -w0)
-
-          cat > remote.sh <<EOS
           set -e
-          export HOME=/root
-          for i in \$(seq 1 40); do [ -f /opt/app/.bootstrap-done ] && break; sleep 10; done
-          [ -f /opt/app/.bootstrap-done ] || { echo "Server bootstrap not finished"; exit 1; }
-          cd /opt/app
-          echo $B64_COMPOSE | base64 -d > docker-compose.yml
-          echo $B64_ENV | base64 -d > backend.env
-          chmod 600 backend.env
-          echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USER --password-stdin
-          export IMAGE_PREFIX=$IMAGE_PREFIX IMAGE_TAG=$GITHUB_SHA
-          docker compose pull
-          docker compose up -d --remove-orphans
-          if [ ! -d /etc/letsencrypt/live/$DOMAIN ]; then
-            certbot --nginx -d $DOMAIN -m "$CERT_EMAIL" --agree-tos --no-eff-email --non-interactive --redirect \
-              || echo "WARNING: certbot failed. Does the DNS A record for $DOMAIN point to this server? Re-run the workflow once it does."
-          fi
-          EOS
+          # Secrets go into a private temp file, never onto a command line
+          umask 077
+          jq -n '{
+            image_prefix: $ENV.IMAGE_PREFIX, image_tag: $ENV.IMAGE_TAG,
+            domain: $ENV.DOMAIN, cert_email: $ENV.CERT_EMAIL,
+            backend_env: $ENV.BACKEND_ENV,
+            ghcr_user: $ENV.GHCR_USER, ghcr_token: $ENV.GHCR_TOKEN,
+            release_sha: $ENV.RELEASE_SHA, release_env: $ENV.RELEASE_ENV,
+            release_actor: $ENV.RELEASE_ACTOR, ssh_user: $ENV.SSH_USER
+          }' > "$RUNNER_TEMP/extra-vars.json"
 
-          jq -n --rawfile s remote.sh '{commands: [$s]}' > params.json
+          cd ansible
+          ansible-playbook -i "$HOST," -u "$SSH_USER" \
+            --private-key ~/.ssh/deploy_key \
+            -e "@$RUNNER_TEMP/extra-vars.json" \
+            site.yml
 
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --parameters file://params.json \
-            --query Command.CommandId --output text)
-
-          STATUS=Pending
-          for i in $(seq 1 90); do
-            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
-              --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)
-            case "$STATUS" in Success|Failed|Cancelled|TimedOut) break ;; esac
-            sleep 10
-          done
-
-          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
-            --query '[StandardOutputContent,StandardErrorContent]' --output text
-          echo "Final status: $STATUS"
-          [ "$STATUS" = "Success" ]
+      - name: Release summary
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+          VERSION: ${{ needs.build.outputs.ref }}
+          TAG: ${{ needs.build.outputs.tag }}
+          SHA: ${{ needs.build.outputs.sha }}
+          TARGET_ENV: ${{ inputs.environment || 'production' }}
+          CLIENT_REPO: ${{ vars.CLIENT_REPO }}
+        run: |
+          {
+            echo "## Release $VERSION -> $TARGET_ENV: $STATUS"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Client repo | $CLIENT_REPO |"
+            echo "| Version | $VERSION |"
+            echo "| Commit | $SHA |"
+            echo "| Image tag | $TAG |"
+            echo "| Requested by | ${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
