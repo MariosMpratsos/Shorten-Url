@@ -1,13 +1,3 @@
-
----
-- name: Create application directory
-  ansible.builtin.file:
-    path: "{{ app_dir }}"
-    state: directory
-    owner: "{{ ssh_user }}"
-    group: "{{ ssh_user }}"
-    mode: "0755"
-
 - name: Copy the compose file
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../docker-compose.yml"
