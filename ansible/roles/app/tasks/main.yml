@@ -1,3 +1,4 @@
+
 - name: Check required variables
   ansible.builtin.assert:
     that:
@@ -5,26 +6,8 @@
       - image_tag | length > 0
       - ghcr_user | length > 0
       - ghcr_token | length > 0
-      - backend_env | length > 0
       - cert_email | length > 0
-    fail_msg: "A required variable is empty (image_prefix, image_tag, ghcr_*, BACKEND_ENV secret or CERT_EMAIL variable)."
-  no_log: true
-
-- name: Copy the compose file
-  ansible.builtin.copy:
-    src: docker-compose.yml
-    dest: "{{ app_dir }}/docker-compose.yml"
-    owner: "{{ ssh_user }}"
-    group: "{{ ssh_user }}"
-    mode: "0644"
-
-- name: Write the backend env file
-  ansible.builtin.copy:
-    content: "{{ backend_env }}\n"
-    dest: "{{ app_dir }}/backend.env"
-    owner: root
-    group: root
-    mode: "0600"
+    fail_msg: "A required variable is empty (image_prefix, image_tag, ghcr_*, CERT_EMAIL variable)."
   no_log: true
 
 - name: Log in to GHCR
@@ -119,7 +102,7 @@
 
 - name: Warn when the certificate could not be issued
   ansible.builtin.debug:
-    msg: "WARNING: certbot failed. Does the DNS A record for {{ domain }} point to this server? Re-run the release once it does."
+    msg: "WARNING: certbot failed. Does the DNS A record for {{ domain }} point at this server? Re-run the release once it does."
   when: certbot_result.rc | default(0) != 0
 
 - name: Remove unused images older than 7 days
