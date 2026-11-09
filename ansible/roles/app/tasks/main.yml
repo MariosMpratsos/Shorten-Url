@@ -1,4 +1,5 @@
 
+---
 - name: Check required variables
   ansible.builtin.assert:
     that:
@@ -91,7 +92,7 @@
       ansible.builtin.fail:
         msg: "Release {{ image_tag }} failed. {{ 'Rolled back to ' ~ prev_tag if prev_tag | length > 0 else 'No previous version to roll back to.' }}"
 
-- name: Request the HTTPS certificate (needs the DNS A record to point at this server)
+- name: Request the HTTPS certificate
   ansible.builtin.command: >
     certbot --nginx -d {{ domain }} -m {{ cert_email }}
     --agree-tos --no-eff-email --non-interactive --redirect

@@ -1,13 +1,9 @@
-# Prepares the server(s) and releases one version of the app.
-# Run by the pipeline over SSH:  ansible-playbook -i "HOST," -u USER site.yml -e @extra-vars.json
+
+---
 - name: Prepare the server and release the app
-  hosts: all
+  hosts: production
   become: true
-  serial: 1            # one server at a time; stop if a release fails
-  vars:
-    app_dir: /opt/app
-    ssh_user: ec2-user
-    compose_version: v2.29.7
+
   roles:
     - base
     - app
