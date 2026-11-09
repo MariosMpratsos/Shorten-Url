@@ -1,14 +1,34 @@
-
----
-- name: Check required variables
+- name: Check required variables (values are never printed)
   ansible.builtin.assert:
-    that:
-      - image_prefix | length > 0
-      - image_tag | length > 0
-      - ghcr_user | length > 0
-      - ghcr_token | length > 0
-      - cert_email | length > 0
-    fail_msg: "A required variable is empty (image_prefix, image_tag, ghcr_*, CERT_EMAIL variable)."
+    that: "{{ item.value | length > 0 }}"
+    fail_msg: "{{ item.hint }} is empty. Set it on the GitHub Environment."
+    quiet: true
+  loop:
+    - { value: "{{ image_prefix }}", hint: "image prefix (build output)" }
+    - { value: "{{ image_tag }}", hint: "image tag (build output)" }
+    - { value: "{{ ghcr_user }}", hint: "GHCR user" }
+    - { value: "{{ ghcr_token }}", hint: "GHCR token" }
+    - { value: "{{ cert_email }}", hint: "CERT_EMAIL variable" }
+  loop_control:
+    label: "{{ item.hint }}"
+  no_log: false
+
+- name: Copy the compose file
+  ansible.builtin.copy:
+    src: docker-compose.yml
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_user }}"
+    mode: "0644"
+
+# BACKEND_ENV is optional: an empty file is created if the secret is not set
+- name: Write the backend env file
+  ansible.builtin.copy:
+    content: "{{ backend_env | default('') }}\n"
+    dest: "{{ app_dir }}/backend.env"
+    owner: root
+    group: root
+    mode: "0600"
   no_log: true
 
 - name: Log in to GHCR
@@ -92,7 +112,7 @@
       ansible.builtin.fail:
         msg: "Release {{ image_tag }} failed. {{ 'Rolled back to ' ~ prev_tag if prev_tag | length > 0 else 'No previous version to roll back to.' }}"
 
-- name: Request the HTTPS certificate
+- name: Request the HTTPS certificate (needs the DNS A record to point at this server)
   ansible.builtin.command: >
     certbot --nginx -d {{ domain }} -m {{ cert_email }}
     --agree-tos --no-eff-email --non-interactive --redirect
@@ -103,7 +123,7 @@
 
 - name: Warn when the certificate could not be issued
   ansible.builtin.debug:
-    msg: "WARNING: certbot failed. Does the DNS A record for {{ domain }} point at this server? Re-run the release once it does."
+    msg: "WARNING: certbot failed. Does the DNS A record for {{ domain }} point to this server? Re-run the release once it does."
   when: certbot_result.rc | default(0) != 0
 
 - name: Remove unused images older than 7 days
