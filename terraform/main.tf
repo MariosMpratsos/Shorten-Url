@@ -21,7 +21,6 @@ variable "security_group_id" {
 
 variable "ssh_cidr" {
   type    = string
-  # Must match the existing rule's CIDR ("0.0.0.0/0") to prevent unwanted modifications during import
   default = "0.0.0.0/0"
 }
 
@@ -59,7 +58,7 @@ import {
   id = "sgr-0c0532bd88ebd285a"
 }
 
-# 3. SSH Rule
+# 3. SSH Rule (Protected with ignore_changes to prevent duplicate rule modifications)
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   security_group_id = var.security_group_id
   description       = "SSH from trusted CIDR"
@@ -67,6 +66,13 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
   ip_protocol       = "tcp"
   from_port         = 22
   to_port           = 22
+
+  lifecycle {
+    ignore_changes = [
+      cidr_ipv4,
+      description,
+    ]
+  }
 }
 
 import {
