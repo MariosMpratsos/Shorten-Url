@@ -17,11 +17,21 @@ variable "aws_region" {
 variable "security_group_id" {
   description = "Existing security group attached to your EC2 instance"
   type        = string
+
+  validation {
+    condition     = can(regex("^sg-[0-9a-fA-F]+$", var.security_group_id))
+    error_message = "security_group_id must be a valid AWS security group id like sg-0123456789abcdef0."
+  }
 }
 
 variable "ssh_cidr" {
-  description = "Trusted IP range allowed to SSH, such as 203.0.113.10/32"
+  description = "Trusted CIDR allowed to SSH into the existing instance. Use your public IP with /32, e.g. 203.0.113.10/32."
   type        = string
+
+  validation {
+    condition     = can(cidrhost(var.ssh_cidr, 0))
+    error_message = "ssh_cidr must be a valid CIDR range."
+  }
 }
 
 provider "aws" {
@@ -48,7 +58,7 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
 
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   security_group_id = var.security_group_id
-  description       = "SSH from trusted IP range"
+  description       = "SSH from trusted CIDR"
   cidr_ipv4         = var.ssh_cidr
   ip_protocol       = "tcp"
   from_port         = 22

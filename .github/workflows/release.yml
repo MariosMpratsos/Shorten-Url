@@ -78,36 +78,9 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
 
-      - name: Validate required infrastructure variables
-        env:
-          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          SECURITY_GROUP_ID: ${{ vars.SECURITY_GROUP_ID }}
-          SSH_CIDR: ${{ vars.SSH_CIDR }}
-        run: |
-          set -e
-          [ -n "$STATE_BUCKET" ] || { echo "Set Actions variable TF_STATE_BUCKET to an existing S3 bucket for Terraform state."; exit 1; }
-          [[ "$SECURITY_GROUP_ID" =~ ^sg-[0-9a-f]+$ ]] || { echo "Set Actions variable SECURITY_GROUP_ID to the existing instance security group ID."; exit 1; }
-          [ -n "$SSH_CIDR" ] || { echo "Set Actions variable SSH_CIDR to a trusted CIDR, e.g. your-ip/32."; exit 1; }
-
-      - name: Extract Public Key from SSH_PRIVATE_KEY
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
-
       - name: Terraform Init
         working-directory: ./terraform
-        env:
-          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-        run: |
-          terraform init \
-            -backend-config="bucket=$STATE_BUCKET" \
-            -backend-config="key=shorten-url/firewall.tfstate" \
-            -backend-config="region=eu-central-1" \
-            -backend-config="encrypt=true"
+        run: terraform init
 
       - name: Terraform Apply
         working-directory: ./terraform
@@ -169,7 +142,7 @@ jobs:
           done
 
   deploy:
-    needs: [prepare, build]
+    needs: [prepare, build, infrastructure]
     runs-on: ubuntu-latest
     environment: ${{ needs.prepare.outputs.environment }}
     steps:
@@ -188,18 +161,19 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           set -e
-          [ -n "$HOST" ] || { echo "Set Actions variable SERVER_IP to the existing EC2 instance public IP or DNS name."; exit 1; }
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
           : > ~/.ssh/known_hosts
-          for i in $(seq 1 30); do
-            OUT=$(ssh-keyscan -T 5 -H "$HOST" 2>/dev/null || true)
-            if [ -n "$OUT" ]; then echo "$OUT" >> ~/.ssh/known_hosts; break; fi
-            echo "Waiting for SSH on $HOST..."; sleep 10
+          for H in ${HOST//,/ }; do
+            for i in $(seq 1 30); do
+              OUT=$(ssh-keyscan -T 5 -H "$H" 2>/dev/null || true)
+              if [ -n "$OUT" ]; then echo "$OUT" >> ~/.ssh/known_hosts; break; fi
+              echo "Waiting for SSH on $H..."; sleep 10
+            done
+            ssh-keygen -F "$H" > /dev/null || { echo "Server $H not reachable over SSH"; exit 1; }
           done
-          ssh-keygen -F "$HOST" > /dev/null || { echo "Server $HOST not reachable over SSH"; exit 1; }
 
       - name: Run the Ansible playbook
         env:
