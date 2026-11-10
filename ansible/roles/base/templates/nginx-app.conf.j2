@@ -3,7 +3,6 @@ server {
     server_name shortener.bratsos.online;
     client_max_body_size 5m;
 
-    # 1. API requests -> backend
     location /api/ {
         proxy_pass http://127.0.0.1:5000/;
         proxy_http_version 1.1;
@@ -16,7 +15,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # 2. Catch ANY short code (letters/numbers) and send to Express backend
+    # Catch short codes and route to Express backend
     location ~ "^/[a-zA-Z0-9]{2,10}$" {
         proxy_pass http://127.0.0.1:5000;
         proxy_http_version 1.1;
@@ -26,7 +25,6 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # 3. Everything else -> frontend (React)
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
