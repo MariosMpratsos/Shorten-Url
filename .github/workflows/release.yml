@@ -63,6 +63,7 @@ jobs:
   infrastructure:
     needs: prepare
     runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.environment }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,8 +87,8 @@ jobs:
         working-directory: ./terraform
         env:
           TF_VAR_aws_region: eu-central-1
-          TF_VAR_security_group_id: ${{ vars.SECURITY_GROUP_ID }}
-          TF_VAR_ssh_cidr: ${{ vars.SSH_CIDR }}
+          TF_VAR_security_group_id: ${{ secrets.SECURITY_GROUP_ID }}
+          TF_VAR_ssh_cidr: ${{ secrets.SSH_CIDR }}
         run: terraform apply -auto-approve
 
   build:
