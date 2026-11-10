@@ -28,7 +28,7 @@ provider "aws" {
   region = var.aws_region
 }
 
-# 1. HTTP Κανόνας (Imported κανονικά, δεν τον πειράζουμε)
+# 1. HTTP Κανόνας
 resource "aws_vpc_security_group_ingress_rule" "http" {
   security_group_id = var.security_group_id
   description       = "HTTP"
@@ -43,7 +43,7 @@ import {
   id = "sgr-0e69b3eecbaf8345a"
 }
 
-# 2. HTTPS Κανόνας (Imported κανονικά, δεν τον πειράζουμε)
+# 2. HTTPS Κανόνας
 resource "aws_vpc_security_group_ingress_rule" "https" {
   security_group_id = var.security_group_id
   description       = "HTTPS"
@@ -58,7 +58,7 @@ import {
   id = "sgr-0c0532bd88ebd285a"
 }
 
-# 3. SSH Κανόνας (Αφήνουμε ΜΟΝΟ το resource, χωρίς το import από κάτω)
+# 3. SSH Κανόνας
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   security_group_id = var.security_group_id
   description       = "SSH from trusted CIDR"
@@ -66,4 +66,10 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
   ip_protocol       = "tcp"
   from_port         = 22
   to_port           = 22
+}
+
+# Επαναφέρουμε το import χρησιμοποιώντας το live ID του SSH κανόνα σας
+import {
+  to = aws_vpc_security_group_ingress_rule.ssh
+  id = "sgr-02167835db3fe1590"
 }
