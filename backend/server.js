@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
+// CRITICAL: Trust proxy so Express reads Nginx headers correctly
 app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json());
@@ -23,7 +24,7 @@ function saveDatabase(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-// 1. REDIRECT ROUTE (Must be at the absolute top so Express catches short codes first)
+// 1. REDIRECT ROUTE (Takes absolute priority)
 app.get('/:shortId', (req, res) => {
     const { shortId } = req.params;
     
@@ -58,8 +59,9 @@ app.post('/api/shorten', (req, res) => {
     db[shortId] = normalizedUrl;
     saveDatabase(db);
 
+    const host = req.headers['x-forwarded-host'] || req.get('host');
     const protocol = req.headers['x-forwarded-proto'] || 'http';
-    const shortUrl = `${protocol}://shortener.bratsos.online/${shortId}`;
+    const shortUrl = `${protocol}://${host}/${shortId}`;
     
     res.json({ shortUrl });
 });
@@ -67,4 +69,4 @@ app.post('/api/shorten', (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Backend running on port ${PORT}`);
-});	
+});
