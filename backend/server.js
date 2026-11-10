@@ -10,7 +10,6 @@ app.use(express.json());
 
 const DB_FILE = path.join(__dirname, 'urls.json');
 
-// Helper to read database
 function getDatabase() {
     try {
         if (fs.existsSync(DB_FILE)) {
@@ -20,11 +19,30 @@ function getDatabase() {
     return {};
 }
 
-// Helper to save database
 function saveDatabase(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
+// 1. REDIRECT ROUTE FIRST (Must be before any static or catch-all handlers)
+app.get('/:shortId', (req, res) => {
+    const { shortId } = req.params;
+    
+    // Ignore favicon or asset requests if they slip through Nginx
+    if (shortId === 'favicon.ico' || shortId === 'assets') {
+        return res.status(404).send('Not found');
+    }
+
+    const db = getDatabase();
+    const longUrl = db[shortId];
+
+    if (longUrl) {
+        return res.redirect(302, longUrl);
+    } else {
+        return res.status(404).send('URL not found');
+    }
+});
+
+// 2. API ROUTE
 app.post('/api/shorten', (req, res) => {
     const { longUrl } = req.body;
     if (!longUrl) {
@@ -45,18 +63,6 @@ app.post('/api/shorten', (req, res) => {
     const shortUrl = `${protocol}://shortener.bratsos.online/${shortId}`;
     
     res.json({ shortUrl });
-});
-
-app.get('/:shortId', (req, res) => {
-    const { shortId } = req.params;
-    const db = getDatabase();
-    const longUrl = db[shortId];
-
-    if (longUrl) {
-        return res.redirect(longUrl);
-    } else {
-        return res.status(404).send('URL not found');
-    }
 });
 
 const PORT = process.env.PORT || 5000;
