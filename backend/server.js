@@ -3,6 +3,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 
 const app = express();
+app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json());
 
@@ -16,11 +17,21 @@ app.post('/api/shorten', (req, res) => {
         return res.status(400).json({ error: 'longUrl is required' });
     }
 
+    // Ensure the URL has http:// or https:// so res.redirect() works externally
+    const normalizedUrl = /^https?:\/\//i.test(longUrl.trim())
+        ? longUrl.trim()
+        : `https://${longUrl.trim()}`;
+
     // Generate a random 6-character hex string
     const shortId = crypto.randomBytes(3).toString('hex');
-    urlDatabase.set(shortId, longUrl);
+    urlDatabase.set(shortId, normalizedUrl);
 
-    const shortUrl = `http://localhost:5000/${shortId}`;
+    // Build base URL dynamically from Nginx headers (or BASE_URL env var if set)
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
+
+    const shortUrl = `${baseUrl}/${shortId}`;
     res.json({ shortUrl });
 });
 
