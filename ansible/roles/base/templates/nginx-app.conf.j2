@@ -16,8 +16,8 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # 2. Short links (3-digit numbers or 6-char hex codes) -> Express backend
-    location ~ "^/([0-9]{3}|[0-9a-fA-F]{6})$" {
+    # 2. Catch ANY short code (letters/numbers) and send to Express backend
+    location ~ "^/[a-zA-Z0-9]{2,10}$" {
         proxy_pass http://127.0.0.1:5000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
