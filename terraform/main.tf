@@ -11,36 +11,31 @@ terraform {
 
 variable "aws_region" {
   type    = string
-  default = "eu-north-1" # 1. ΔΙΟΡΘΩΣΗ: Αλλαγή από eu-central-1 σε eu-north-1
+  default = "eu-north-1"
 }
 
 variable "security_group_id" {
-  description = "Existing security group attached to your EC2 instance"
-  type        = string
-  default     = "sg-0420e2c843ddc2108" # 2. ΔΙΟΡΘΩΣΗ: Το ID από το launch-wizard-2 του screenshot σας
-
-  validation {
-    condition     = can(regex("^sg-[0-9a-fA-F]+$", var.security_group_id))
-    error_message = "security_group_id must be a valid AWS security group id like sg-0123456789abcdef0."
-  }
+  type    = string
+  default = "sg-0420e2c843ddc2108"
 }
 
 variable "ssh_cidr" {
-  description = "Trusted CIDR allowed to SSH into the existing instance."
-  type        = string
-  default     = "0.0.0.0/0" # 3. ΔΙΟΡΘΩΣΗ: Default επιλογή για να μην κολλάει το apply (μπορείτε να βάλετε την IP σας, π.χ. "X.X.X.X/32")
-
-  validation {
-    condition     = can(cidrhost(var.ssh_cidr, 0))
-    error_message = "ssh_cidr must be a valid CIDR range."
-  }
+  type    = string
+  default = "0.0.0.0/0"
 }
 
 provider "aws" {
   region = var.aws_region
 }
 
+# 1. Διαβάζουμε live το Security Group από το AWS για να δούμε τι κανόνες έχει ήδη
+data "aws_security_group" "current" {
+  id = var.security_group_id
+}
+
+# 2. HTTP: Δημιουργία ΜΟΝΟ αν δεν υπάρχει ήδη κανένας κανόνας για την port 80
 resource "aws_vpc_security_group_ingress_rule" "http" {
+  count             = length([for r in data.aws_security_group.current.inbound_rules : r if r.from_port == 80]) == 0 ? 1 : 0
   security_group_id = var.security_group_id
   description       = "HTTP"
   cidr_ipv4         = "0.0.0.0/0"
@@ -49,7 +44,9 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
   to_port           = 80
 }
 
+# 3. HTTPS: Δημιουργία ΜΟΝΟ αν δεν υπάρχει ήδη κανένας κανόνας για την port 443
 resource "aws_vpc_security_group_ingress_rule" "https" {
+  count             = length([for r in data.aws_security_group.current.inbound_rules : r if r.from_port == 443]) == 0 ? 1 : 0
   security_group_id = var.security_group_id
   description       = "HTTPS"
   cidr_ipv4         = "0.0.0.0/0"
@@ -58,7 +55,9 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
   to_port           = 443
 }
 
+# 4. SSH: Δημιουργία ΜΟΝΟ αν δεν υπάρχει ήδη κανένας κανόνας για την port 22
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
+  count             = length([for r in data.aws_security_group.current.inbound_rules : r if r.from_port == 22]) == 0 ? 1 : 0
   security_group_id = var.security_group_id
   description       = "SSH from trusted CIDR"
   cidr_ipv4         = var.ssh_cidr
