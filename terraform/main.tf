@@ -28,7 +28,7 @@ provider "aws" {
   region = var.aws_region
 }
 
-# 1. HTTP Κανόνας (Port 80)
+# 1. HTTP Κανόνας (Imported κανονικά, δεν τον πειράζουμε)
 resource "aws_vpc_security_group_ingress_rule" "http" {
   security_group_id = var.security_group_id
   description       = "HTTP"
@@ -40,10 +40,10 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
 
 import {
   to = aws_vpc_security_group_ingress_rule.http
-  id = "sgr-0e69b3eecbaf8345a" # <--- Το live ID από το AWS Console σας
+  id = "sgr-0e69b3eecbaf8345a"
 }
 
-# 2. HTTPS Κανόνας (Port 443)
+# 2. HTTPS Κανόνας (Imported κανονικά, δεν τον πειράζουμε)
 resource "aws_vpc_security_group_ingress_rule" "https" {
   security_group_id = var.security_group_id
   description       = "HTTPS"
@@ -55,10 +55,10 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
 
 import {
   to = aws_vpc_security_group_ingress_rule.https
-  id = "sgr-0c0532bd88ebd285a" # <--- Το live ID από το AWS Console σας
+  id = "sgr-0c0532bd88ebd285a"
 }
 
-# 3. SSH Κανόνας (Port 22)
+# 3. SSH Κανόνας (Αφήνουμε ΜΟΝΟ το resource, χωρίς το import από κάτω)
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   security_group_id = var.security_group_id
   description       = "SSH from trusted CIDR"
@@ -66,9 +66,4 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
   ip_protocol       = "tcp"
   from_port         = 22
   to_port           = 22
-}
-
-import {
-  to = aws_vpc_security_group_ingress_rule.ssh
-  id = "sgr-02167835db3fe1590" # <--- Το live ID από το AWS Console σας
 }
