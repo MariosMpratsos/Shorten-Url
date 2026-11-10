@@ -1,5 +1,7 @@
 terraform {
   required_version = ">= 1.5.0"
+  backend "s3" {}
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -8,11 +10,34 @@ terraform {
   }
 }
 
-provider "aws" {
-  region = "eu-central-1"
+variable "aws_region" {
+  type    = string
+  default = "eu-central-1"
 }
 
-# --- VPC & NETWORKING ---
+variable "domain" {
+  type = string
+}
+
+variable "ssh_user" {
+  type    = string
+  default = "ec2-user"
+}
+
+variable "environment" {
+  type    = string
+  default = "production"
+}
+
+variable "ssh_public_key" {
+  type = string
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+# --- VPC & SUBNETS (PUBLIC + PRIVATE) ---
 
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -20,7 +45,9 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = {
-    Name = "shortener-vpc"
+    Name        = "shortener-vpc-${var.environment}"
+    Domain      = var.domain
+    Environment = var.environment
   }
 }
 
@@ -28,7 +55,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
-  availability_zone       = "eu-central-1a"
+  availability_zone       = "${var.aws_region}a"
 
   tags = {
     Name = "shortener-public-subnet"
@@ -38,7 +65,7 @@ resource "aws_subnet" "public" {
 resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.2.0/24"
-  availability_zone = "eu-central-1a"
+  availability_zone = "${var.aws_region}a"
 
   tags = {
     Name = "shortener-private-subnet"
@@ -103,11 +130,10 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
-
-# --- FIREWALL / SECURITY GROUPS ---
+# --- FIREWALL / SECURITY GROUP ---
 
 resource "aws_security_group" "server_sg" {
-  name        = "shortener-server-sg"
+  name        = "shortener-server-sg-${var.environment}"
   description = "Allow HTTP, HTTPS, and SSH"
   vpc_id      = aws_vpc.main.id
 
@@ -141,36 +167,25 @@ resource "aws_security_group" "server_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  tags = {
-    Name = "shortener-server-sg"
-  }
 }
 
+# --- SSH KEY PAIR & EC2 INSTANCE ---
 
-# --- EC2 INSTANCE ---
-
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"]
-  }
+resource "aws_key_pair" "deployer" {
+  key_name   = "shortener-deploy-key-${var.environment}"
+  public_key = var.ssh_public_key
 }
 
-variable "ssh_key_name" {
-  type    = string
-  default = "shortener-deploy-key"
+data "aws_ssm_parameter" "al2023_ami" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
 resource "aws_instance" "app_server" {
-  ami                         = data.aws_ami.al2023.id
+  ami                         = data.aws_ssm_parameter.al2023_ami.value
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.public.id
   vpc_security_group_ids      = [aws_security_group.server_sg.id]
-  key_name                    = var.ssh_key_name
+  key_name                    = aws_key_pair.deployer.key_name
   associate_public_ip_address = true
 
   root_block_device {
@@ -179,11 +194,11 @@ resource "aws_instance" "app_server" {
   }
 
   tags = {
-    Name = "shortener-app-server"
+    Name   = "shortener-app-server"
+    Domain = var.domain
   }
 }
 
 output "server_public_ip" {
-  description = "Public IP address of the EC2 instance"
-  value       = aws_instance.app_server.public_ip
+  value = aws_instance.app_server.public_ip
 }
