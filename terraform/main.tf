@@ -21,8 +21,7 @@ variable "security_group_id" {
 
 variable "ssh_cidr" {
   type    = string
-  # Change this to your public IP (e.g., "203.0.113.50/32") if accessing from the internet, 
-  # or keep "0.0.0.0/0" if you want to allow SSH from anywhere.
+  # Must match the existing rule's CIDR ("0.0.0.0/0") to prevent unwanted modifications during import
   default = "0.0.0.0/0"
 }
 
