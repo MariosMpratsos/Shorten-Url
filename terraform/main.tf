@@ -28,14 +28,8 @@ provider "aws" {
   region = var.aws_region
 }
 
-# 1. Διαβάζουμε live το Security Group από το AWS για να δούμε τι κανόνες έχει ήδη
-data "aws_security_group" "current" {
-  id = var.security_group_id
-}
-
-# 2. HTTP: Δημιουργία ΜΟΝΟ αν δεν υπάρχει ήδη κανένας κανόνας για την port 80
+# 1. HTTP Κανόνας
 resource "aws_vpc_security_group_ingress_rule" "http" {
-  count             = length([for r in data.aws_security_group.current.inbound_rules : r if r.from_port == 80]) == 0 ? 1 : 0
   security_group_id = var.security_group_id
   description       = "HTTP"
   cidr_ipv4         = "0.0.0.0/0"
@@ -44,9 +38,13 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
   to_port           = 80
 }
 
-# 3. HTTPS: Δημιουργία ΜΟΝΟ αν δεν υπάρχει ήδη κανένας κανόνας για την port 443
+import {
+  to = aws_vpc_security_group_ingress_rule.http
+  id = "${var.security_group_id}_ingress_tcp_80_80_0.0.0.0/0"
+}
+
+# 2. HTTPS Κανόνας
 resource "aws_vpc_security_group_ingress_rule" "https" {
-  count             = length([for r in data.aws_security_group.current.inbound_rules : r if r.from_port == 443]) == 0 ? 1 : 0
   security_group_id = var.security_group_id
   description       = "HTTPS"
   cidr_ipv4         = "0.0.0.0/0"
@@ -55,13 +53,22 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
   to_port           = 443
 }
 
-# 4. SSH: Δημιουργία ΜΟΝΟ αν δεν υπάρχει ήδη κανένας κανόνας για την port 22
+import {
+  to = aws_vpc_security_group_ingress_rule.https
+  id = "${var.security_group_id}_ingress_tcp_443_443_0.0.0.0/0"
+}
+
+# 3. SSH Κανόνας
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
-  count             = length([for r in data.aws_security_group.current.inbound_rules : r if r.from_port == 22]) == 0 ? 1 : 0
   security_group_id = var.security_group_id
   description       = "SSH from trusted CIDR"
   cidr_ipv4         = var.ssh_cidr
   ip_protocol       = "tcp"
   from_port         = 22
   to_port           = 22
+}
+
+import {
+  to = aws_vpc_security_group_ingress_rule.ssh
+  id = "${var.security_group_id}_ingress_tcp_22_22_${var.ssh_cidr}"
 }
