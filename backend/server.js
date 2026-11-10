@@ -1,12 +1,29 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json());
 
-const urlDatabase = new Map();
+const DB_FILE = path.join(__dirname, 'urls.json');
+
+// Helper to read database
+function getDatabase() {
+    try {
+        if (fs.existsSync(DB_FILE)) {
+            return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return {};
+}
+
+// Helper to save database
+function saveDatabase(db) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+}
 
 app.post('/api/shorten', (req, res) => {
     const { longUrl } = req.body;
@@ -19,7 +36,10 @@ app.post('/api/shorten', (req, res) => {
         : `https://${longUrl.trim()}`;
 
     const shortId = String(Math.floor(100 + Math.random() * 900));
-    urlDatabase.set(shortId, normalizedUrl);
+    
+    const db = getDatabase();
+    db[shortId] = normalizedUrl;
+    saveDatabase(db);
 
     const protocol = req.headers['x-forwarded-proto'] || 'http';
     const shortUrl = `${protocol}://shortener.bratsos.online/${shortId}`;
@@ -29,7 +49,8 @@ app.post('/api/shorten', (req, res) => {
 
 app.get('/:shortId', (req, res) => {
     const { shortId } = req.params;
-    const longUrl = urlDatabase.get(shortId);
+    const db = getDatabase();
+    const longUrl = db[shortId];
 
     if (longUrl) {
         return res.redirect(longUrl);
