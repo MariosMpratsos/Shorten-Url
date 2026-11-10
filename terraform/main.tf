@@ -11,12 +11,13 @@ terraform {
 
 variable "aws_region" {
   type    = string
-  default = "eu-central-1"
+  default = "eu-north-1" # 1. ΔΙΟΡΘΩΣΗ: Αλλαγή από eu-central-1 σε eu-north-1
 }
 
 variable "security_group_id" {
   description = "Existing security group attached to your EC2 instance"
   type        = string
+  default     = "sg-0420e2c843ddc2108" # 2. ΔΙΟΡΘΩΣΗ: Το ID από το launch-wizard-2 του screenshot σας
 
   validation {
     condition     = can(regex("^sg-[0-9a-fA-F]+$", var.security_group_id))
@@ -25,8 +26,9 @@ variable "security_group_id" {
 }
 
 variable "ssh_cidr" {
-  description = "Trusted CIDR allowed to SSH into the existing instance. Use your public IP with /32, e.g. 203.0.113.10/32."
+  description = "Trusted CIDR allowed to SSH into the existing instance."
   type        = string
+  default     = "0.0.0.0/0" # 3. ΔΙΟΡΘΩΣΗ: Default επιλογή για να μην κολλάει το apply (μπορείτε να βάλετε την IP σας, π.χ. "X.X.X.X/32")
 
   validation {
     condition     = can(cidrhost(var.ssh_cidr, 0))
