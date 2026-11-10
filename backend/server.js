@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const crypto = require('crypto');
 
 const app = express();
 app.set('trust proxy', true);
@@ -17,19 +16,18 @@ app.post('/api/shorten', (req, res) => {
         return res.status(400).json({ error: 'longUrl is required' });
     }
 
-    // Ensure the URL has http:// or https:// so res.redirect() works externally
+    // Add https:// if the user typed "www.google.com" without a protocol
     const normalizedUrl = /^https?:\/\//i.test(longUrl.trim())
         ? longUrl.trim()
         : `https://${longUrl.trim()}`;
 
-    // Generate a random 6-character hex string
-    const shortId = crypto.randomBytes(3).toString('hex');
+    // Generate a random 3-digit number (100 - 999)
+    const shortId = String(Math.floor(100 + Math.random() * 900));
     urlDatabase.set(shortId, normalizedUrl);
 
-    // Build base URL dynamically from Nginx headers (or BASE_URL env var if set)
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const baseUrl = process.env.BASE_URL || `${protocol}://${host}`;
+    // Always return shortener.bratsos.online (preserving http or https)
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const baseUrl = process.env.BASE_URL || `${protocol}://shortener.bratsos.online`;
 
     const shortUrl = `${baseUrl}/${shortId}`;
     res.json({ shortUrl });
