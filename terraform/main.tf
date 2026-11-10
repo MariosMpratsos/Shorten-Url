@@ -36,6 +36,11 @@ provider "aws" {
   region = var.aws_region
 }
 
+# --- SSM public AMI lookup (avoids ec2:DescribeImages) ---
+data "aws_ssm_parameter" "al2023" {
+  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+}
+
 # --- VPC & SUBNETS (PUBLIC + PRIVATE) ---
 
 resource "aws_vpc" "main" {
@@ -175,23 +180,8 @@ resource "aws_key_pair" "deployer" {
   public_key = var.ssh_public_key
 }
 
-data "aws_ami" "al2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-2023.*-x86_64"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
 resource "aws_instance" "app_server" {
-  ami                         = data.aws_ami.al2023.id
+  ami                         = data.aws_ssm_parameter.al2023.value
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.public.id
   vpc_security_group_ids      = [aws_security_group.server_sg.id]
