@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-// CRITICAL: Trust proxy so Express reads Nginx headers correctly
 app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json());
