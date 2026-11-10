@@ -23,12 +23,11 @@ function saveDatabase(db) {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-// 1. REDIRECT ROUTE FIRST (Must be before any static or catch-all handlers)
+// 1. REDIRECT ROUTE (Must be at the absolute top so Express catches short codes first)
 app.get('/:shortId', (req, res) => {
     const { shortId } = req.params;
     
-    // Ignore favicon or asset requests if they slip through Nginx
-    if (shortId === 'favicon.ico' || shortId === 'assets') {
+    if (shortId === 'api' || shortId === 'favicon.ico') {
         return res.status(404).send('Not found');
     }
 
@@ -42,7 +41,7 @@ app.get('/:shortId', (req, res) => {
     }
 });
 
-// 2. API ROUTE
+// 2. CREATE SHORT URL API
 app.post('/api/shorten', (req, res) => {
     const { longUrl } = req.body;
     if (!longUrl) {
@@ -68,4 +67,4 @@ app.post('/api/shorten', (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Backend running on port ${PORT}`);
-});
+});	
