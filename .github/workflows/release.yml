@@ -93,19 +93,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ./terraform
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BUCKET="shortener-tfstate-${ACCOUNT_ID}-eu-central-1"
-          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-            aws s3api create-bucket \
-              --bucket "$BUCKET" \
-              --region eu-central-1 \
-              --create-bucket-configuration LocationConstraint=eu-central-1
-          fi
-          terraform init \
-            -backend-config="bucket=$BUCKET" \
-            -backend-config="key=shortener/${{ needs.prepare.outputs.environment }}/terraform.tfstate" \
-            -backend-config="region=eu-central-1"
+        run: terraform init
 
       - name: Terraform Apply
         working-directory: ./terraform
