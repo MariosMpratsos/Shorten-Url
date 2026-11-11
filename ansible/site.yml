@@ -42,17 +42,34 @@
         dest: /usr/local/bin/certbot
         state: link
 
-    # Runs only if the certificate does not exist yet.
-    # nginx is not started at this point, so port 80 is free for certbot.
+    - name: Check DOMAIN and CERT_EMAIL are set
+      ansible.builtin.assert:
+        that:
+          - domain | default('') | length > 0
+          - cert_email | default('') | length > 0
+        fail_msg: "Set the repo variables DOMAIN and CERT_EMAIL in GitHub (Settings > Secrets and variables > Actions > Variables)"
+
+    - name: Check if the certificate exists
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+      register: cert
+
+    # Only when there is no certificate yet: free port 80, then ask Let's Encrypt
+    - name: Stop nginx so port 80 is free
+      ansible.builtin.service:
+        name: nginx
+        state: stopped
+      ignore_errors: true
+      when: not cert.stat.exists
+
     - name: Get the certificate
       ansible.builtin.command: >
-        certbot certonly --standalone
+        /opt/certbot/bin/certbot certonly --standalone
         -d {{ domain }} --email {{ cert_email }}
         --agree-tos --non-interactive
         --pre-hook "systemctl stop nginx"
         --post-hook "systemctl start nginx"
-      args:
-        creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+      when: not cert.stat.exists
 
     - name: Renew certificate automatically
       ansible.builtin.cron:
