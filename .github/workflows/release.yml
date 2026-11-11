@@ -136,8 +136,7 @@ jobs:
 
       - name: Initialize, Import Existing Subnet if Present, and Apply
         id: tf
-        # Uncomment the next line if your main.tf is inside a ./terraform folder:
-        # working-directory: ./terraform
+        working-directory: ./terraform
         run: |
           set -e
           terraform init
