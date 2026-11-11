@@ -1,3 +1,4 @@
+---
 - name: Deploy
   hosts: all
   become: true
@@ -103,12 +104,18 @@
         content: "{{ backend_env }}\n"
       no_log: true
 
+    # ---------- Nginx ----------
+    # nginx/nginx.conf.j2 uses {{ domain }} so it always matches the certificate
     - name: Copy nginx config
-      ansible.builtin.copy:
-        src: ../nginx/nginx.conf
+      ansible.builtin.template:
+        src: ../nginx/nginx.conf.j2
         dest: /etc/nginx/conf.d/app.conf
-        mode: '0644'
+        mode: "0644"
       notify: Reload nginx
+
+    - name: Test nginx config
+      ansible.builtin.command: nginx -t
+      changed_when: false
 
     - name: Start nginx
       ansible.builtin.service:
@@ -116,6 +123,10 @@
         state: started
         enabled: true
 
+    - name: Apply nginx changes now
+      ansible.builtin.meta: flush_handlers
+
+    # ---------- Containers ----------
     - name: Log in to GHCR
       ansible.builtin.shell: echo "$TOKEN" | docker login ghcr.io -u "{{ ghcr_user }}" --password-stdin
       environment:
