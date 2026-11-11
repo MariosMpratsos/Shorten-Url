@@ -60,37 +60,6 @@ jobs:
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "environment=$TARGET" >> "$GITHUB_OUTPUT"
 
-  infrastructure:
-    needs: prepare
-    runs-on: ubuntu-latest
-    environment: ${{ needs.prepare.outputs.environment }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-north-1
-
-      - name: Terraform Init
-        working-directory: ./terraform
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: ./terraform
-        env:
-          TF_VAR_aws_region: eu-north-1
-          TF_VAR_security_group_id: ${{ secrets.SECURITY_GROUP_ID }}
-          TF_VAR_ssh_cidr: ${{ secrets.SSH_CIDR }}
-        run: terraform apply -auto-approve
-
   build:
     needs: prepare
     runs-on: ubuntu-latest
@@ -143,7 +112,7 @@ jobs:
           done
 
   deploy:
-    needs: [prepare, build, infrastructure]
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     environment: ${{ needs.prepare.outputs.environment }}
     steps:
@@ -158,10 +127,11 @@ jobs:
 
       - name: Prepare SSH
         env:
-          HOST: ${{ vars.SERVER_IP }}
+          HOST: ${{ vars.SERVER_HOST }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           set -e
+          [ -n "$HOST" ] || { echo "SERVER_HOST variable is empty"; exit 1; }
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
@@ -179,7 +149,7 @@ jobs:
 
       - name: Run the Ansible playbook
         env:
-          HOST: ${{ vars.SERVER_IP }}
+          HOST: ${{ vars.SERVER_HOST }}
           SSH_USER: ${{ vars.SSH_USER || 'ec2-user' }}
           DOMAIN: ${{ vars.DOMAIN }}
           CERT_EMAIL: ${{ vars.CERT_EMAIL }}
@@ -228,7 +198,7 @@ jobs:
           TAG: ${{ needs.build.outputs.tag }}
           SHA: ${{ needs.build.outputs.sha }}
           TARGET_ENV: ${{ needs.prepare.outputs.environment }}
-          SERVER_IP: ${{ vars.SERVER_IP }}
+          SERVER_HOST: ${{ vars.SERVER_HOST }}
           SOURCE_REPO: ${{ vars.CLIENT_REPO || github.repository }}
           ACTOR: ${{ github.actor }}
         run: |
@@ -238,7 +208,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| Source repo | $SOURCE_REPO |"
-            echo "| Server IP | $SERVER_IP |"
+            echo "| Server host | $SERVER_HOST |"
             echo "| Version | $VERSION |"
             echo "| Commit | $SHA |"
             echo "| Image tag | $TAG |"
