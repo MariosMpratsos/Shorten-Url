@@ -90,7 +90,7 @@
 
     - name: Write .env
       ansible.builtin.copy:
-        dest: "{{ app_dir }}.env"
+        dest: "{{ app_dir }}/.env"
         mode: "0600"
         content: |
           IMAGE_PREFIX={{ image_prefix }}
@@ -107,6 +107,7 @@
       ansible.builtin.copy:
         src: ../nginx/nginx.conf
         dest: /etc/nginx/conf.d/app.conf
+        mode: '0644'
       notify: Reload nginx
 
     - name: Start nginx
