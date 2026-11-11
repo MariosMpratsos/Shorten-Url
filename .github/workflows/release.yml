@@ -111,8 +111,56 @@ jobs:
             docker push "$PREFIX/$svc:$TAG"
           done
 
+  terraform:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.environment }}
+    outputs:
+      subnet_id: ${{ steps.tf.outputs.subnet_id }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-north-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.0"
+          terraform_wrapper: false
+
+      - name: Initialize, Import Existing Subnet if Present, and Apply
+        id: tf
+        # Uncomment the next line if your main.tf is inside a ./terraform folder:
+        # working-directory: ./terraform
+        run: |
+          set -e
+          terraform init
+
+          # Check if the 172.31.96.0/20 subnet was already created on a previous run
+          EXISTING_SUBNET=$(aws ec2 describe-subnets \
+            --filters "Name=cidr-block,Values=172.31.96.0/20" \
+            --query "Subnets[0].SubnetId" \
+            --output text 2>/dev/null || true)
+
+          if [ -n "$EXISTING_SUBNET" ] && [ "$EXISTING_SUBNET" != "None" ]; then
+            echo "Found existing subnet $EXISTING_SUBNET, importing into local state..."
+            terraform import aws_subnet.main "$EXISTING_SUBNET" || true
+          fi
+
+          terraform validate
+          terraform apply -auto-approve
+
+          SUBNET_ID=$(terraform output -raw created_subnet_id)
+          echo "subnet_id=$SUBNET_ID" >> "$GITHUB_OUTPUT"
+
   deploy:
-    needs: [prepare, build]
+    needs: [prepare, build, terraform]
     runs-on: ubuntu-latest
     environment: ${{ needs.prepare.outputs.environment }}
     steps:
@@ -161,6 +209,7 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
+          SUBNET_ID: ${{ needs.terraform.outputs.subnet_id }}
           ANSIBLE_FORCE_COLOR: "1"
         run: |
           set -e
@@ -177,6 +226,7 @@ jobs:
             release_env: $ENV.RELEASE_ENV,
             release_actor: $ENV.RELEASE_ACTOR,
             ssh_user: $ENV.SSH_USER,
+            subnet_id: $ENV.SUBNET_ID,
             backend_env: $ENV.BACKEND_ENV
           }' > "$RUNNER_TEMP/extra-vars.json"
 
@@ -199,6 +249,7 @@ jobs:
           SHA: ${{ needs.build.outputs.sha }}
           TARGET_ENV: ${{ needs.prepare.outputs.environment }}
           SERVER_HOST: ${{ vars.SERVER_HOST }}
+          SUBNET_ID: ${{ needs.terraform.outputs.subnet_id }}
           SOURCE_REPO: ${{ vars.CLIENT_REPO || github.repository }}
           ACTOR: ${{ github.actor }}
         run: |
@@ -209,6 +260,7 @@ jobs:
             echo "|---|---|"
             echo "| Source repo | $SOURCE_REPO |"
             echo "| Server host | $SERVER_HOST |"
+            echo "| AWS Subnet ID | $SUBNET_ID |"
             echo "| Version | $VERSION |"
             echo "| Commit | $SHA |"
             echo "| Image tag | $TAG |"

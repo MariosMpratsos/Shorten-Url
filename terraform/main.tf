@@ -28,6 +28,32 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Finds the Default VPC in your AWS account
+data "aws_vpc" "default" {
+  default = true
+}
+
+# Creates the Subnet on Run #1 and re-imports it automatically on future runs
+resource "aws_subnet" "main" {
+  vpc_id                  = data.aws_vpc.default.id
+  cidr_block              = "172.31.96.0/20"
+  availability_zone       = "eu-north-1a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "main-terraform-subnet"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      cidr_block,
+      availability_zone,
+      map_public_ip_on_launch,
+      tags,
+    ]
+  }
+}
+
 # 1. HTTP Rule
 resource "aws_vpc_security_group_ingress_rule" "http" {
   security_group_id = var.security_group_id
@@ -58,7 +84,7 @@ import {
   id = "sgr-0c0532bd88ebd285a"
 }
 
-# 3. SSH Rule (Protected with ignore_changes to prevent duplicate rule modifications)
+# 3. SSH Rule
 resource "aws_vpc_security_group_ingress_rule" "ssh" {
   security_group_id = var.security_group_id
   description       = "SSH from trusted CIDR"
@@ -78,4 +104,8 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
 import {
   to = aws_vpc_security_group_ingress_rule.ssh
   id = "sgr-02167835db3fe1590"
+}
+
+output "created_subnet_id" {
+  value = aws_subnet.main.id
 }
