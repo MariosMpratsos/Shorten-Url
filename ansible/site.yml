@@ -1,13 +1,81 @@
-# Prepares the server(s) and releases one version of the app.
-# Run by the pipeline over SSH:  ansible-playbook -i "HOST," -u USER site.yml -e @extra-vars.json
-- name: Prepare the server and release the app
+---
+- name: Deploy
   hosts: all
   become: true
-  serial: 1            # one server at a time; stop if a release fails
   vars:
     app_dir: /opt/app
-    ssh_user: ec2-user
-    compose_version: v2.29.7
-  roles:
-    - base
-    - app
+
+  tasks:
+    - name: Install docker and nginx
+      ansible.builtin.dnf:
+        name: [docker, nginx]
+        state: present
+
+    - name: Start docker and nginx
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: [docker, nginx]
+
+    - name: Create docker plugin directory
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins
+        state: directory
+
+    - name: Install docker compose plugin
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-{{ ansible_architecture }}"
+        dest: /usr/local/lib/docker/cli-plugins/docker-compose
+        mode: "0755"
+
+    - name: Create app directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: ../docker-compose.yml
+        dest: "{{ app_dir }}/docker-compose.yml"
+
+    - name: Write .env
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/.env"
+        mode: "0600"
+        content: |
+          IMAGE_PREFIX={{ image_prefix }}
+          IMAGE_TAG={{ image_tag }}
+
+    - name: Write backend.env
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/backend.env"
+        mode: "0600"
+        content: "{{ backend_env }}\n"
+      no_log: true
+
+    - name: Copy nginx config
+      ansible.builtin.copy:
+        src: ../nginx/app.conf
+        dest: /etc/nginx/conf.d/app.conf
+      notify: Reload nginx
+
+    - name: Log in to GHCR
+      ansible.builtin.shell: echo "$TOKEN" | docker login ghcr.io -u "{{ ghcr_user }}" --password-stdin
+      environment:
+        TOKEN: "{{ ghcr_token }}"
+      no_log: true
+
+    - name: Pull and start containers
+      ansible.builtin.shell: docker compose pull && docker compose up -d --remove-orphans
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Log out of GHCR
+      ansible.builtin.command: docker logout ghcr.io
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

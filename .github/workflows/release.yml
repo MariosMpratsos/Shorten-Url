@@ -77,7 +77,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-north-1 # ΔΙΟΡΘΩΣΗ: Αλλαγή σε eu-north-1
+          aws-region: eu-north-1
 
       - name: Terraform Init
         working-directory: ./terraform
@@ -86,7 +86,7 @@ jobs:
       - name: Terraform Apply
         working-directory: ./terraform
         env:
-          TF_VAR_aws_region: eu-north-1 # ΔΙΟΡΘΩΣΗ: Αλλαγή σε eu-north-1
+          TF_VAR_aws_region: eu-north-1
           TF_VAR_security_group_id: ${{ secrets.SECURITY_GROUP_ID }}
           TF_VAR_ssh_cidr: ${{ secrets.SSH_CIDR }}
         run: terraform apply -auto-approve
@@ -135,7 +135,7 @@ jobs:
             EXTRA=""
             if [ "$svc" = "frontend" ]; then EXTRA="--build-arg VITE_API_URL=/api"; fi
             docker build $EXTRA \
-              --label "org.opencontainers.image.source=https://github.com" \
+              --label "org.opencontainers.image.source=https://github.com/$SOURCE_REPO" \
               --label "org.opencontainers.image.revision=$SHA" \
               --label "org.opencontainers.image.version=$TAG" \
               -t "$PREFIX/$svc:$TAG" "./client/$svc"
@@ -147,6 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.prepare.outputs.environment }}
     steps:
+      # Checks out THIS repo: ./ansible and ./docker-compose.yml
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -180,8 +181,6 @@ jobs:
         env:
           HOST: ${{ vars.SERVER_IP }}
           SSH_USER: ${{ vars.SSH_USER || 'ec2-user' }}
-          DOMAIN: ${{ vars.DOMAIN }}
-          CERT_EMAIL: ${{ vars.CERT_EMAIL }}
           IMAGE_PREFIX: ${{ needs.build.outputs.image_prefix }}
           IMAGE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_SHA: ${{ needs.build.outputs.sha }}
@@ -189,6 +188,7 @@ jobs:
           RELEASE_ACTOR: ${{ github.actor }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BACKEND_ENV: ${{ secrets.BACKEND_ENV }}
           ANSIBLE_FORCE_COLOR: "1"
         run: |
           set -e
@@ -197,14 +197,13 @@ jobs:
           jq -n '{
             image_prefix: $ENV.IMAGE_PREFIX,
             image_tag: $ENV.IMAGE_TAG,
-            domain: $ENV.DOMAIN,
-            cert_email: $ENV.CERT_EMAIL,
             ghcr_user: $ENV.GHCR_USER,
             ghcr_token: $ENV.GHCR_TOKEN,
             release_sha: $ENV.RELEASE_SHA,
             release_env: $ENV.RELEASE_ENV,
             release_actor: $ENV.RELEASE_ACTOR,
-            ssh_user: $ENV.SSH_USER
+            ssh_user: $ENV.SSH_USER,
+            backend_env: $ENV.BACKEND_ENV
           }' > "$RUNNER_TEMP/extra-vars.json"
 
           cd ansible
@@ -212,6 +211,10 @@ jobs:
             --private-key ~/.ssh/deploy_key \
             -e "@$RUNNER_TEMP/extra-vars.json" \
             site.yml
+
+      - name: Clean up secrets
+        if: always()
+        run: rm -f "$RUNNER_TEMP/extra-vars.json" ~/.ssh/deploy_key
 
       - name: Release summary
         if: always()
@@ -223,6 +226,7 @@ jobs:
           TARGET_ENV: ${{ needs.prepare.outputs.environment }}
           SERVER_IP: ${{ vars.SERVER_IP }}
           SOURCE_REPO: ${{ vars.CLIENT_REPO || github.repository }}
+          ACTOR: ${{ github.actor }}
         run: |
           {
             echo "## Release $VERSION -> $TARGET_ENV: $STATUS"
@@ -234,5 +238,5 @@ jobs:
             echo "| Version | $VERSION |"
             echo "| Commit | $SHA |"
             echo "| Image tag | $TAG |"
-            echo "| Requested by | ${{ github.actor }} |"
+            echo "| Requested by | $ACTOR |"
           } >> "$GITHUB_STEP_SUMMARY"
