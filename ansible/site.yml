@@ -90,7 +90,7 @@
 
     - name: Write .env
       ansible.builtin.copy:
-        dest: "{{ app_dir }}/.env"
+        dest: "{{ app_dir }}.env"
         mode: "0600"
         content: |
           IMAGE_PREFIX={{ image_prefix }}

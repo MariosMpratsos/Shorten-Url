@@ -147,7 +147,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ needs.prepare.outputs.environment }}
     steps:
-      # Checks out THIS repo: ./ansible and ./docker-compose.yml
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -172,7 +171,8 @@ jobs:
             for i in $(seq 1 30); do
               OUT=$(ssh-keyscan -T 5 -H "$H" 2>/dev/null || true)
               if [ -n "$OUT" ]; then echo "$OUT" >> ~/.ssh/known_hosts; break; fi
-              echo "Waiting for SSH on $H..."; sleep 10
+              echo "Waiting for SSH on $H..."
+              sleep 10
             done
             ssh-keygen -F "$H" > /dev/null || { echo "Server $H not reachable over SSH"; exit 1; }
           done
