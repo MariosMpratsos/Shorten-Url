@@ -181,6 +181,8 @@ jobs:
         env:
           HOST: ${{ vars.SERVER_IP }}
           SSH_USER: ${{ vars.SSH_USER || 'ec2-user' }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          CERT_EMAIL: ${{ vars.CERT_EMAIL }}
           IMAGE_PREFIX: ${{ needs.build.outputs.image_prefix }}
           IMAGE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_SHA: ${{ needs.build.outputs.sha }}
@@ -197,6 +199,8 @@ jobs:
           jq -n '{
             image_prefix: $ENV.IMAGE_PREFIX,
             image_tag: $ENV.IMAGE_TAG,
+            domain: $ENV.DOMAIN,
+            cert_email: $ENV.CERT_EMAIL,
             ghcr_user: $ENV.GHCR_USER,
             ghcr_token: $ENV.GHCR_TOKEN,
             release_sha: $ENV.RELEASE_SHA,

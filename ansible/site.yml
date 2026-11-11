@@ -6,17 +6,17 @@
     app_dir: /opt/app
 
   tasks:
-    - name: Install docker and nginx
+    - name: Install docker, nginx, python and cron
       ansible.builtin.dnf:
-        name: [docker, nginx]
+        name: [docker, nginx, python3, python3-pip, cronie]
         state: present
 
-    - name: Start docker and nginx
+    - name: Start docker and cron
       ansible.builtin.service:
         name: "{{ item }}"
         state: started
         enabled: true
-      loop: [docker, nginx]
+      loop: [docker, crond]
 
     - name: Create docker plugin directory
       ansible.builtin.file:
@@ -29,6 +29,39 @@
         dest: /usr/local/lib/docker/cli-plugins/docker-compose
         mode: "0755"
 
+    # ---------- Certbot ----------
+    - name: Install certbot
+      ansible.builtin.pip:
+        name: certbot
+        virtualenv: /opt/certbot
+        virtualenv_command: python3 -m venv
+
+    - name: Link certbot
+      ansible.builtin.file:
+        src: /opt/certbot/bin/certbot
+        dest: /usr/local/bin/certbot
+        state: link
+
+    # Runs only if the certificate does not exist yet.
+    # nginx is not started at this point, so port 80 is free for certbot.
+    - name: Get the certificate
+      ansible.builtin.command: >
+        certbot certonly --standalone
+        -d {{ domain }} --email {{ cert_email }}
+        --agree-tos --non-interactive
+        --pre-hook "systemctl stop nginx"
+        --post-hook "systemctl start nginx"
+      args:
+        creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+
+    - name: Renew certificate automatically
+      ansible.builtin.cron:
+        name: certbot renew
+        minute: "17"
+        hour: "3"
+        job: "/usr/local/bin/certbot renew --quiet"
+
+    # ---------- App ----------
     - name: Create app directory
       ansible.builtin.file:
         path: "{{ app_dir }}"
@@ -59,6 +92,12 @@
         src: ../nginx/app.conf
         dest: /etc/nginx/conf.d/app.conf
       notify: Reload nginx
+
+    - name: Start nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
 
     - name: Log in to GHCR
       ansible.builtin.shell: echo "$TOKEN" | docker login ghcr.io -u "{{ ghcr_user }}" --password-stdin
