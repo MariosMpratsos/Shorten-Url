@@ -134,22 +134,44 @@ jobs:
           terraform_version: "1.8.0"
           terraform_wrapper: false
 
-      - name: Initialize, Import Existing Subnet if Present, and Apply
+      - name: Initialize, Import Existing Resources if Present, and Apply
         id: tf
         working-directory: ./terraform
         run: |
           set -e
           terraform init
 
-          # Check if the 172.31.96.0/20 subnet was already created on a previous run
-          EXISTING_SUBNET=$(aws ec2 describe-subnets \
-            --filters "Name=cidr-block,Values=172.31.96.0/20" \
-            --query "Subnets[0].SubnetId" \
-            --output text 2>/dev/null || true)
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=isDefault,Values=true" \
+            --query "Vpcs[0].VpcId" --output text)
 
-          if [ -n "$EXISTING_SUBNET" ] && [ "$EXISTING_SUBNET" != "None" ]; then
-            echo "Found existing subnet $EXISTING_SUBNET, importing into local state..."
-            terraform import aws_subnet.main "$EXISTING_SUBNET" || true
+          # Subnet
+          SUBNET=$(aws ec2 describe-subnets \
+            --filters "Name=cidr-block,Values=172.31.96.0/20" "Name=vpc-id,Values=$VPC_ID" \
+            --query "Subnets[0].SubnetId" --output text)
+
+          if [ "$SUBNET" != "None" ] && [ -n "$SUBNET" ]; then
+            echo "Importing subnet $SUBNET"
+            terraform import aws_subnet.main "$SUBNET"
+
+            # Route table (found by its Name tag)
+            RTB=$(aws ec2 describe-route-tables \
+              --filters "Name=tag:Name,Values=main-terraform-private-rt" "Name=vpc-id,Values=$VPC_ID" \
+              --query "RouteTables[0].RouteTableId" --output text)
+
+            if [ "$RTB" != "None" ] && [ -n "$RTB" ]; then
+              echo "Importing route table $RTB"
+              terraform import aws_route_table.private "$RTB"
+
+              ASSOC=$(aws ec2 describe-route-tables --route-table-ids "$RTB" \
+                --query "RouteTables[0].Associations[?SubnetId=='$SUBNET'].RouteTableAssociationId | [0]" \
+                --output text)
+
+              if [ "$ASSOC" != "None" ] && [ -n "$ASSOC" ]; then
+                echo "Importing route table association"
+                terraform import aws_route_table_association.private "$SUBNET/$RTB"
+              fi
+            fi
           fi
 
           terraform validate

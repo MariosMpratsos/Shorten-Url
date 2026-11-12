@@ -33,25 +33,40 @@ data "aws_vpc" "default" {
   default = true
 }
 
-# Creates the Subnet on Run #1 and re-imports it automatically on future runs
+# Private subnet: no public IPs assigned on launch
 resource "aws_subnet" "main" {
   vpc_id                  = data.aws_vpc.default.id
   cidr_block              = "172.31.96.0/20"
   availability_zone       = "eu-north-1a"
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = {
-    Name = "main-terraform-subnet"
+    Name = "main-terraform-private-subnet"
   }
 
+  # map_public_ip_on_launch and tags are NOT ignored, so an already
+  # existing subnet gets switched to private on apply.
   lifecycle {
     ignore_changes = [
       cidr_block,
       availability_zone,
-      map_public_ip_on_launch,
-      tags,
     ]
   }
+}
+
+# Route table with only the implicit "local" route (no 0.0.0.0/0 to the
+# internet gateway), which is what makes the subnet private.
+resource "aws_route_table" "private" {
+  vpc_id = data.aws_vpc.default.id
+
+  tags = {
+    Name = "main-terraform-private-rt"
+  }
+}
+
+resource "aws_route_table_association" "private" {
+  subnet_id      = aws_subnet.main.id
+  route_table_id = aws_route_table.private.id
 }
 
 # 1. HTTP Rule
